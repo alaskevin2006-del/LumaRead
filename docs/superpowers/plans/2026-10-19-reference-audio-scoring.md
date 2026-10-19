@@ -11,10 +11,10 @@ Spec: ../specs/2026-10-19-reference-audio-scoring-design.md
 Global constraints: fixed full precision model; no public scorer port; no secrets in Git;
 resource test before provider activation; preserve old results; no invented word scores.
 
-- [ ] 1. Core: failing tests for DTW and audio validation, implement scorer and pinned container; probe memory/latency safely.
-- [ ] 2. Integration: failing tests for reference snapshot, authorization and no-audio completion; implement migration, adapter and API.
-- [ ] 3. UI: implement experimental similarity and paired segment playback, admin page test, eligible-page controls; typecheck/build/e2e.
-- [ ] 4. Release: fresh review, regression, backup, versioned deploy, smoke tests and Git sync.
+- [x] 1. Core: failing tests for DTW and audio validation, implement scorer and pinned container; probe memory/latency safely.
+- [x] 2. Integration: failing tests for reference snapshot, authorization and no-audio completion; implement migration, adapter and API.
+- [x] 3. UI: implement experimental similarity and paired segment playback, admin page test, eligible-page controls; typecheck/build/e2e.
+- [x] 4. Release: fresh review, regression, backup, versioned deploy, smoke tests and Git sync.
 
 Review focus: untrusted recording bounds, malformed scorer output, immutable reference
 authorization, retained legacy sessions, no-audio completion, CPU/RAM isolation,
@@ -44,3 +44,19 @@ and report measured blocker, without replacing the approved model.
   Browser codec overhead now has a bounded one-second allowance, matching upload validation;
   full sequence remains unchanged. Probe covers 61 seconds. Full suite: 37 passed, 1 skipped.
 - Review resource note accepted: actual HTTP endpoint memory must be measured, not only the standalone probe.
+
+- Post-review restart-flow coverage also exposed the need to exclude inactive historical
+  rounds from resume shortcuts; regression reproduced and fixed. Full local suite remains
+  37 passed, 1 skipped; 8 browser tests passed. Final PostgreSQL suite: 33 passed.
+- Resource gate passed: full 60-second HTTP comparison 176.81 seconds, 2 GiB cgroup
+  peak, zero OOM events. Short 8-second comparison 24.57 seconds cold / 6.02 cached.
+  Synthetic self-matches are mechanics tests, not pronunciation accuracy validation.
+- Production activated as ref-24c9caa, reference_similarity, schema 0003. Real admin
+  browser upload of existing 30.762-second reference completed in 81 seconds with
+  index 100 and segment playback controls. No student learning records were created.
+- No review findings deferred. Model is deployed unchanged; results remain experimental.
+
+- Final visual inspection found clipped playback controls in the admin dialog. Added
+  a failing desktop/mobile bounds test, widened the dialog and wrapped controls;
+  production build and all 9 browser tests now pass. Final UI release ref-522857b.
+  Actual reference/recording byte-range playback both returned HTTP 206.
