@@ -1,0 +1,101 @@
+name: lumaread
+x-app: &app
+  image: lumaread-api:${LUMA_RELEASE:-local}
+  build: ./backend
+  env_file: .env
+  environment:
+    LUMA_DATABASE_URL: postgresql+psycopg://lumaread:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/lumaread
+    LUMA_MEDIA_DIR: /data/media
+    LUMA_SECURE_COOKIES: 'true'
+  volumes:
+    - media:/data/media
+  networks: [private]
+  restart: unless-stopped
+  security_opt: [no-new-privileges:true]
+  logging: {driver: json-file, options: {max-size: 10m, max-file: '3'}}
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: lumaread
+      POSTGRES_USER: lumaread
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes: [database:/var/lib/postgresql/data]
+    networks: [private]
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U lumaread -d lumaread']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: {driver: json-file, options: {max-size: 10m, max-file: '3'}}
+  migrate:
+    <<: *app
+    command: [alembic, upgrade, head]
+    restart: 'no'
+    mem_limit: 256m
+    cpus: 0.5
+    depends_on:
+      db: {condition: service_healthy}
+  api:
+    <<: *app
+    mem_limit: 384m
+    cpus: 0.75
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=4)"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+  worker:
+    <<: *app
+    command: [python, -m, app.worker]
+    mem_limit: 512m
+    cpus: 0.75
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  cleanup:
+    <<: *app
+    command: [sh, -c, 'while true; do python -m app.cli cleanup; sleep 86400; done']
+    mem_limit: 128m
+    cpus: 0.2
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  web:
+    image: lumaread-web:${LUMA_RELEASE:-local}
+    build: ./frontend
+    networks: [private]
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      api: {condition: service_healthy}
+    logging: {driver: json-file, options: {max-size: 10m, max-file: '3'}}
+  gateway:
+    image: caddy:2.11.7-alpine
+    ports: ['${LUMA_HTTPS_PORT:-8443}:443']
+    environment:
+      LUMA_HOST: ${LUMA_HOST:?Set LUMA_HOST}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+      - caddy:/data
+      - caddy_config:/config
+    networks: [private]
+    depends_on: [web]
+    restart: unless-stopped
+    mem_limit: 96m
+    cpus: 0.25
+    security_opt: [no-new-privileges:true]
+    logging: {driver: json-file, options: {max-size: 10m, max-file: '3'}}
+networks:
+  private: {}
+volumes:
+  database: {}
+  media: {}
+  caddy: {}
+  caddy_config: {}

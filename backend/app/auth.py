@@ -67,8 +67,12 @@ def set_session(request,db,response,user):
 def login(data:Login,request:Request,response:Response,db:DB):
     key=(request.client.host,data.username.lower())
     with request.app.state.login_lock:
-        queue=request.app.state.login_attempts[key]
-        while queue and queue[0]<time.monotonic()-900:queue.popleft()
+        attempts=request.app.state.login_attempts;cutoff=time.monotonic()-900
+        for stale,q in list(attempts.items()):
+            if not q or q[-1]<cutoff:del attempts[stale]
+        if key not in attempts and len(attempts)>=4096:fail(429,'登录请求较多，请稍后再试')
+        queue=attempts[key]
+        while queue and queue[0]<cutoff:queue.popleft()
         if len(queue)>=10:fail(429,'尝试次数过多，请 15 分钟后再试')
         queue.append(time.monotonic())
     u=db.scalar(select(User).where(User.username==data.username.lower()))

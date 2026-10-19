@@ -6,7 +6,7 @@ from fastapi import FastAPI,Request
 from fastapi.responses import JSONResponse
 from .config import Settings
 from .db import Base,make_db
-from . import models,auth
+from . import models,auth,content,media,reading
 
 def create_app(settings=None):
     settings=settings or Settings()
@@ -34,11 +34,12 @@ def create_app(settings=None):
         response.headers['Cache-Control']='no-store'
         return response
     app.include_router(auth.router)
+    app.include_router(content.router)
+    app.include_router(media.router)
+    app.include_router(reading.router)
     @app.get('/api/health')
     def health():
         from sqlalchemy import text
         with factory() as db:db.execute(text('SELECT 1'))
         return {'status':'ok','service':'lumaread','speech_provider':settings.speech_provider}
-    @app.get('/api/books')
-    def books(user:auth.Current):return []
     return app

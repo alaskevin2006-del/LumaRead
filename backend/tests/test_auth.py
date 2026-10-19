@@ -38,3 +38,15 @@ def test_csrf_and_account_validation(admin):
     assert c.post('/api/admin/users',json={'username':'../bad','name':'X','password':'short'}).status_code==422
     student(c)
     assert c.post('/api/admin/users',json={'username':'student','name':'duplicate','password':'Student123'}).status_code==409
+
+def test_failed_login_tracking_expires_and_is_bounded(env):
+    from collections import deque
+    import time
+    app,c=env
+    app.state.login_attempts.update({('ip',str(i)):deque([time.monotonic()-1000]) for i in range(4100)})
+    assert c.post('/api/auth/login',json={'username':'missing','password':'wrong'}).status_code==401
+    assert len(app.state.login_attempts)==1
+    app.state.login_attempts.clear()
+    app.state.login_attempts.update({('ip',str(i)):deque([time.monotonic()]) for i in range(4096)})
+    assert c.post('/api/auth/login',json={'username':'another','password':'wrong'}).status_code==429
+    assert len(app.state.login_attempts)==4096

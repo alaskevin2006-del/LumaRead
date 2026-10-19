@@ -13,7 +13,11 @@ data/
 playwright-report/
 test-results/
 coverage/
+*.tsbuildinfo
 *.pem
 *.key
 *.pfx
 .DS_Store
+backups/
+certs/
+deploy/certificate-source.env

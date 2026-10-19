@@ -1,0 +1,5 @@
+[Unit]
+Description=Refresh only the LumaRead copy of the server certificate
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /opt/lumaread/deploy/sync-certificate.sh
