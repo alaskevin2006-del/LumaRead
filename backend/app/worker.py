@@ -23,7 +23,8 @@ def pdf_job(app,job_id):
                 name=uid()+'.png';pix.save(str(Path(app.state.settings.media_dir)/name))
                 image=MediaAsset(user_id=j.user_id,version_id=v.id,kind='image',filename=f'page-{idx+1}.png',path=name,mime='image/png')
                 db.add(image);db.flush()
-                db.add(Page(version_id=v.id,position=idx+1,image_id=image.id,text=source.get_text().strip()[:3000]))
+                text=source.get_text().strip()[:3000]
+                db.add(Page(version_id=v.id,position=idx+1,image_id=image.id,text=text,kind='practice' if __import__('re').search('[A-Za-z]',text) else 'display'))
                 if not v.cover_id:v.cover_id=image.id
             except Exception:failures.append(idx+1)
             j.progress=round((idx+1)/len(doc)*100);db.commit()

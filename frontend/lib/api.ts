@@ -1,4 +1,4 @@
-export type User={id:string;username:string;name:string;role:string;active:boolean;must_change_password:boolean};
+export type User={id:string;username:string;name:string;class_name:string;role:string;active:boolean;must_change_password:boolean};
 export type Page={id:string;position:number;kind:string;text:string;image_id:string|null;audio_id:string|null;audio_start_ms:number;audio_end_ms:number|null;reviewed:boolean};
 export type Version={id:string;title:string;description:string;level:string;cover_id:string|null;pages:Page[];number:number;published:boolean};
 export type Book={id:string;status:string;published:Version|null;draft:Version|null};

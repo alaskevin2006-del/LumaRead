@@ -53,7 +53,7 @@ def complete(session_id:str,user:Current,db:DB):
     pages=list(db.scalars(select(Page).where(Page.version_id==s.version_id,Page.kind=='practice').order_by(Page.position)))
     done=set(db.scalars(select(ReadingAttempt.page_id).where(ReadingAttempt.session_id==s.id,ReadingAttempt.status=='succeeded')))
     missing=[p.position for p in pages if p.id not in done]
-    if missing or not pages:raise HTTPException(422,{'message':'请补齐未练习的页面','missing_pages':missing})
+    if missing:raise HTTPException(422,{'message':'请补齐未练习的页面','missing_pages':missing})
     s.completed_at=now();s.active_key=None;day=local_date(s.completed_at)
     insert=__import__('sqlalchemy.dialects.sqlite' if db.bind.dialect.name=='sqlite' else 'sqlalchemy.dialects.postgresql',fromlist=['insert']).insert
     db.execute(insert(Checkin).values(user_id=user.id,date=day).on_conflict_do_nothing(index_elements=['user_id','date']))

@@ -39,7 +39,7 @@ class PageInput(BaseModel):
     reviewed:bool|None=None
 
 @router.get('/admin/books')
-def admin_books(admin:Admin,db:DB):return [book_json(db,b,True) for b in db.scalars(select(Book).order_by(Book.created_at.desc()))]
+def admin_books(admin:Admin,db:DB):return [book_json(db,b,True) for b in db.scalars(select(Book).where(Book.status!='deleted').order_by(Book.created_at.desc()))]
 @router.post('/admin/books',status_code=201)
 def new_book(data:BookInput,admin:Admin,db:DB):
     b=Book();db.add(b);db.flush();db.add(BookVersion(book_id=b.id,**data.model_dump(exclude={'cover_id'})));db.commit();return book_json(db,b,True)
@@ -73,22 +73,29 @@ def archive(book_id:str,admin:Admin,db:DB):
     b=db.get(Book,book_id)
     if not b:fail(404,'绘本不存在')
     if not b.published_version_id:fail(409,'草稿请使用删除')
-    b.status='archived';db.commit();return {'ok':True}
+    revision(book_id,admin,db)
+    b.status='draft';db.commit();return {'ok':True}
 @router.delete('/admin/books/{book_id}')
 def remove_book(book_id:str,admin:Admin,db:DB):
     b=db.get(Book,book_id)
     if not b:fail(404,'绘本不存在')
-    if b.published_version_id:fail(409,'已发布绘本只能下架')
+    if b.status=='published':fail(409,'请先下架绘本')
+    if b.published_version_id:
+        b.status='deleted';db.commit();return {'ok':True}
     for v in db.scalars(select(BookVersion).where(BookVersion.book_id==b.id)):
         busy(db,v.id);db.execute(delete(Page).where(Page.version_id==v.id));db.delete(v)
     db.flush();db.delete(b);db.commit();return {'ok':True}
 
 @router.post('/admin/versions/{version_id}/pages',status_code=201)
-def add_page(version_id:str,admin:Admin,db:DB):
+def add_page(version_id:str,admin:Admin,db:DB,position:int|None=None):
     v=get_draft(db,version_id);busy(db,v.id)
     pages=list(db.scalars(select(Page).where(Page.version_id==v.id)))
     if len(pages)>=100:fail(422,'最多 100 页')
-    p=Page(version_id=v.id,position=max([x.position for x in pages],default=0)+1)
+    position=position if position is not None else len(pages)+1
+    if not 1<=position<=len(pages)+1:fail(422,'插入位置无效')
+    for other in sorted(pages,key=lambda p:p.position,reverse=True):
+        if other.position>=position:other.position+=1;db.flush()
+    p=Page(version_id=v.id,position=position,kind='display')
     db.add(p);db.commit();return page_json(p)
 @router.patch('/admin/pages/{page_id}')
 def edit_page(page_id:str,data:PageInput,admin:Admin,db:DB):
@@ -143,18 +150,16 @@ async def import_pdf(version_id:str,request:Request,admin:Admin,db:DB,file:Uploa
 def publish_issues(db,v):
     issues=[];pages=list(db.scalars(select(Page).where(Page.version_id==v.id).order_by(Page.position)))
     if not v.title.strip():issues.append('请填写书名')
-    if not v.cover_id:issues.append('请设置封面')
-    if not any(p.kind=='practice' for p in pages):issues.append('至少需要一个练习页')
+    if not v.cover_id and not any(p.image_id for p in pages):issues.append('请设置封面或上传页面图片')
+    if not pages:issues.append('至少需要一个页面')
     for p in pages:
         prefix=f'第 {p.position} 页：'
-        if not p.image_id:issues.append(prefix+'缺少图片')
+        if not (p.image_id or p.text.strip() or p.audio_id):issues.append(prefix+'页面为空，请添加图片、文字或音频')
         if p.kind=='practice':
             if not p.text.strip():issues.append(prefix+'缺少标准英文')
-            if not p.audio_id:issues.append(prefix+'缺少原音')
-            if not p.reviewed:issues.append(prefix+'尚未校对')
-            if p.audio_id:
-                a=db.get(MediaAsset,p.audio_id)
-                if not a or not p.audio_end_ms or not 0<=p.audio_start_ms<p.audio_end_ms<=a.duration_ms:issues.append(prefix+'音频区间无效')
+        if p.audio_id:
+            a=db.get(MediaAsset,p.audio_id)
+            if not a or not p.audio_end_ms or not 0<=p.audio_start_ms<p.audio_end_ms<=a.duration_ms:issues.append(prefix+'音频区间无效')
     return issues
 @router.get('/admin/versions/{version_id}/check')
 def check(version_id:str,admin:Admin,db:DB):
@@ -165,6 +170,7 @@ def check(version_id:str,admin:Admin,db:DB):
 def publish(version_id:str,admin:Admin,db:DB):
     v=get_draft(db,version_id);busy(db,version_id);issues=publish_issues(db,v)
     if issues:raise __import__('fastapi').HTTPException(422,{'message':'发布检查未通过','issues':issues})
+    if not v.cover_id:v.cover_id=db.scalar(select(Page.image_id).where(Page.version_id==v.id,Page.image_id.is_not(None)).order_by(Page.position))
     v.published=True;b=db.get(Book,v.book_id);b.published_version_id=v.id;b.status='published';db.commit();return book_json(db,b,True)
 
 @router.get('/books')
@@ -184,3 +190,41 @@ def job_status(job_id:str,user:Current,db:DB):
     j=db.get(Job,job_id)
     if not j or (user.role!='admin' and j.user_id!=user.id):fail(404,'任务不存在')
     return {k:getattr(j,k) for k in ['id','status','progress','error','result','kind']}
+
+
+class PageOrder(BaseModel):
+    page_ids:list[str]=Field(min_length=1,max_length=100)
+
+@router.put('/admin/versions/{version_id}/order')
+def order_pages(version_id:str,data:PageOrder,admin:Admin,db:DB):
+    get_draft(db,version_id);busy(db,version_id)
+    pages={p.id:p for p in db.scalars(select(Page).where(Page.version_id==version_id))}
+    if len(data.page_ids)!=len(pages) or set(data.page_ids)!=set(pages):fail(422,'必须包含全部页面且不能重复')
+    for i,p in enumerate(pages.values(),1):p.position=1000+i
+    db.flush()
+    for i,pid in enumerate(data.page_ids,1):pages[pid].position=i
+    db.commit();return {'ok':True}
+
+class AudioBinding(BaseModel):
+    page_id:str
+    audio_id:str
+    start_ms:int=Field(ge=0)
+    end_ms:int=Field(gt=0)
+class AudioBindings(BaseModel):
+    bindings:list[AudioBinding]=Field(min_length=1,max_length=100)
+    overwrite:bool=False
+
+@router.put('/admin/versions/{version_id}/audio-bindings')
+def bind_audio(version_id:str,data:AudioBindings,admin:Admin,db:DB):
+    v=get_draft(db,version_id);busy(db,version_id)
+    versions=set(db.scalars(select(BookVersion.id).where(BookVersion.book_id==v.book_id)))
+    seen=set()
+    for item in data.bindings:
+        p=db.get(Page,item.page_id);a=db.get(MediaAsset,item.audio_id)
+        if not p or p.version_id!=version_id or p.id in seen:fail(422,'页面无效或重复')
+        seen.add(p.id)
+        if p.audio_id and not data.overwrite:fail(409,'部分页面已有音频，请明确选择覆盖')
+        if not a or a.kind!='audio' or a.version_id not in versions:fail(422,'音频不属于此绘本')
+        if not 0<=item.start_ms<item.end_ms<=(a.duration_ms or 0):fail(422,'音频区间无效')
+        p.audio_id=a.id;p.audio_start_ms=item.start_ms;p.audio_end_ms=item.end_ms
+    db.commit();return {'ok':True}

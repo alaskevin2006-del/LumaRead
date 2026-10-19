@@ -1,8 +1,8 @@
 import hashlib,re,secrets,time,threading
 from collections import defaultdict,deque
 from datetime import timedelta
-from typing import Annotated
-from fastapi import APIRouter,Depends,Request,Response,HTTPException
+from typing import Annotated,Literal
+from fastapi import APIRouter,Depends,Request,Response,HTTPException,UploadFile,File
 from pydantic import BaseModel,Field,field_validator
 from sqlalchemy import select,delete
 from sqlalchemy.exc import IntegrityError
@@ -20,7 +20,7 @@ def fail(code,message):raise HTTPException(code,message)
 def verify(encoded,password):
     try:return hasher.verify(encoded,password)
     except (VerificationError,InvalidHashError):return False
-def user_json(u):return {'id':u.id,'username':u.username,'name':u.name,'role':u.role,'active':u.active,'must_change_password':u.must_change_password}
+def user_json(u):return {'id':u.id,'username':u.username,'name':u.name,'class_name':u.class_name,'role':u.role,'active':u.active,'must_change_password':u.must_change_password}
 def get_user(request:Request,db:DB):
     token=request.cookies.get('lumaread_session','')
     session=db.get(AuthSession,hashlib.sha256(token.encode()).hexdigest()) if token else None
@@ -49,6 +49,7 @@ class PasswordChange(BaseModel):
 class NewUser(BaseModel):
     username:str=Field(pattern=r'^[a-zA-Z0-9_]{3,32}$')
     name:str=Field(min_length=1,max_length=30)
+    class_name:str=Field(default='',max_length=60)
     password:str|None=Field(default=None,min_length=8,max_length=64)
     @field_validator('password')
     @classmethod
@@ -107,7 +108,7 @@ def users(admin:Admin,db:DB):return [user_json(u) for u in db.scalars(select(Use
 @router.post('/admin/users',status_code=201)
 def create_user(data:NewUser,admin:Admin,db:DB):
     password=data.password or secrets.token_urlsafe(10)+'9a'
-    user=User(username=data.username.lower(),name=data.name,password_hash=hasher.hash(password))
+    user=User(username=data.username.lower(),name=data.name,class_name=data.class_name,password_hash=hasher.hash(password))
     db.add(user)
     try:db.commit()
     except IntegrityError:db.rollback();fail(409,'登录账号已存在')
@@ -129,3 +130,71 @@ def seed_admin(factory,username,password):
     with factory() as db:
         if db.scalar(select(User).where(User.username==username)):return
         db.add(User(username=username,name='管理员',password_hash=hasher.hash(password),role='admin',must_change_password=False));db.commit()
+
+
+class StudentRow(BaseModel):
+    name:str=Field(min_length=1,max_length=30)
+    username:str=Field(default='',pattern=r'^(?:[a-zA-Z0-9_]{3,32})?$')
+    class_name:str=Field(default='',max_length=60)
+class StudentImport(BaseModel):
+    rows:list[StudentRow]=Field(min_length=1,max_length=200)
+
+@router.post('/admin/students/import',status_code=201)
+def import_students(data:StudentImport,admin:Admin,db:DB):
+    names=set();prepared=[]
+    for row in data.rows:
+        username=row.username.lower() or 's_'+secrets.token_hex(6)
+        if not row.name.strip():fail(422,'姓名不能为空')
+        if username in names or db.scalar(select(User.id).where(User.username==username)):fail(409,'账号重复：'+username)
+        names.add(username);prepared.append((row,username))
+    result=[]
+    for row,username in prepared:
+        pw=secrets.token_urlsafe(10)+'9a'
+        u=User(username=username,name=row.name.strip(),class_name=row.class_name,password_hash=hasher.hash(pw));db.add(u);db.flush()
+        result.append({**user_json(u),'temporary_password':pw})
+    try:db.commit()
+    except IntegrityError:db.rollback();fail(409,'账号已存在，请刷新后重试')
+    return result
+
+class StudentBulk(BaseModel):
+    ids:list[str]=Field(min_length=1,max_length=200)
+    action:Literal['enable','disable','reset','class']
+    class_name:str=Field(default='',max_length=60)
+
+@router.post('/admin/students/bulk')
+def bulk_students(data:StudentBulk,admin:Admin,db:DB):
+    users=list(db.scalars(select(User).where(User.id.in_(data.ids),User.role=='student').with_for_update()))
+    if len(users)!=len(set(data.ids)):fail(422,'选择包含无效学生账号')
+    result=[]
+    for u in users:
+        extra={}
+        if data.action=='class':u.class_name=data.class_name
+        if data.action in ['enable','disable']:u.active=data.action=='enable'
+        if data.action=='reset':
+            pw=secrets.token_urlsafe(10)+'9a';u.password_hash=hasher.hash(pw);u.must_change_password=True;extra['temporary_password']=pw
+        if data.action in ['disable','reset']:db.execute(delete(AuthSession).where(AuthSession.user_id==u.id))
+        result.append({**user_json(u),**extra})
+    db.commit();return result
+
+@router.post('/admin/students/preview')
+async def preview_students(admin:Admin,file:UploadFile=File()):
+    import io,zipfile
+    from openpyxl import load_workbook
+    raw=await file.read(2*1024*1024+1)
+    if len(raw)>2*1024*1024:fail(422,'名单文件不能超过 2 MB')
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            if sum(i.file_size for i in z.infolist())>20*1024*1024:fail(422,'表格内容过大')
+        workbook=load_workbook(io.BytesIO(raw),read_only=True,data_only=False,keep_links=False)
+        rows=[]
+        try:
+            for i,values in enumerate(workbook.active.iter_rows(max_row=202,max_col=3,values_only=True)):
+                cells=[str(v).strip() if v is not None else '' for v in values]
+                if not any(cells) or (i==0 and cells[0]=='姓名'):continue
+                if any(v.startswith('=') for v in cells):fail(422,'请将公式转换为普通文本后导入')
+                rows.append(dict(zip(['name','username','class_name'],cells)))
+        finally:workbook.close()
+        if len(rows)>200:fail(422,'每批最多 200 人')
+        return rows
+    except HTTPException:raise
+    except Exception:fail(422,'无法读取 Excel，请使用未加密的 .xlsx 文件')
