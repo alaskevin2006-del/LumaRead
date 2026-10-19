@@ -22,7 +22,7 @@ def session_json(db,s,detail=False):
     result={'id':s.id,'book_id':s.book_id,'version_id':s.version_id,'current_page':s.current_page,'completed_at':s.completed_at,'created_at':s.created_at,'completed_pages':list(dict.fromkeys(a.page_id for a in attempts))}
     v=db.get(BookVersion,s.version_id)
     result.update(title=v.title,level=v.level,cover_id=v.cover_id,page_count=db.scalar(select(func.count()).select_from(Page).where(Page.version_id==v.id,Page.kind=='practice')))
-    result.update(scoring_mode=s.scoring_mode,required_page_ids=s.required_page_ids)
+    result.update(scoring_mode=s.scoring_mode,required_page_ids=s.required_page_ids,active=bool(s.active_key))
     if s.required_page_ids is not None:result['page_count']=len(s.required_page_ids)
     if detail:
         result['version']=version_json(db,v);result['latest_results']={a.page_id:a.result for a in attempts}

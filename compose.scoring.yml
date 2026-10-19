@@ -14,7 +14,7 @@ services:
     cpus: 0.75
     pids_limit: 128
     security_opt: [no-new-privileges:true]
-    restart: 'no'
+    restart: unless-stopped
     logging: {driver: json-file, options: {max-size: 10m, max-file: '3'}}
 volumes:
   scoring_cache: {}

@@ -89,4 +89,5 @@ def test_legacy_round_does_not_silently_change_mode_and_can_restart(admin):
     assert c.post('/api/sessions/'+new['id']+'/complete').status_code==200
     # The historical incomplete round and its original requirements stay intact.
     assert c.get('/api/sessions/'+old['id']).json()['completed_at'] is None
+    assert c.get('/api/sessions/'+old['id']).json()['active'] is False
     assert c.post('/api/sessions/'+old['id']+'/complete').status_code==422
