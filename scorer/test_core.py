@@ -19,4 +19,10 @@ def test_silence_clipping_and_edge_trim():
     assert offset>0 and len(y)<22400
     quiet,_=prepare(x*.3)
     assert np.allclose(quiet,prepare(x)[0],atol=.001)
-    with pytest.raises(ValueError):prepare(np.zeros(16000*61))
+    with pytest.raises(ValueError):prepare(np.zeros(16000*62))
+
+def test_recorder_encoder_duration_tolerance():
+    # Browser timer/container overhead must not reject a legitimate 60-second take.
+    x=.1*np.sin(np.arange(int(60.25*16000))*.12).astype(np.float32)
+    y,_=prepare(x)
+    assert len(y)==len(x)

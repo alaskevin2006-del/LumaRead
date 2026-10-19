@@ -31,7 +31,7 @@ def features(x):
 def decode(data):
     with tempfile.TemporaryDirectory() as folder:
         path=Path(folder)/'input';path.write_bytes(data)
-        p=subprocess.run(['ffmpeg','-nostdin','-v','error','-xerror','-i',str(path),'-t','61','-vn','-ar','16000','-ac','1','-f','f32le','pipe:1'],capture_output=True,timeout=35)
+        p=subprocess.run(['ffmpeg','-nostdin','-v','error','-xerror','-i',str(path),'-t','62','-vn','-ar','16000','-ac','1','-f','f32le','pipe:1'],capture_output=True,timeout=35)
         if p.returncode or not p.stdout:raise ValueError('音频损坏或不完整，请重新录制或上传')
         return prepare(np.frombuffer(p.stdout,dtype='<f4'))
 

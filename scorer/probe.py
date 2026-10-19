@@ -1,14 +1,20 @@
 """Resource/mechanics probe; generated signal is NOT pronunciation validation."""
-import json,time,resource
+import json,time
 import numpy as np
 from service import load_model,features
 from core import prepare,compare
 
 def report(**data):
-    print(json.dumps(data|{'rss_peak_mb':round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024,1)}),flush=True)
+    try:
+        import resource
+        peak=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024
+    except ImportError:
+        import psutil
+        info=psutil.Process().memory_info();peak=getattr(info,'peak_wset',info.rss)/1024**2
+    print(json.dumps(data|{'rss_peak_mb':round(peak,1)}),flush=True)
 
 start=time.monotonic();load_model();report(stage='loaded',seconds=round(time.monotonic()-start,2))
-for duration in [2,10,30,60]:
+for duration in [2,10,30,61]:
     # Chirp/amplitude modulation exercises full sequence allocation, no chunking.
     t=np.arange(duration*16000,dtype=np.float32)/16000
     signal=(.12*np.sin(2*np.pi*(170*t+20*t*t))*(.6+.4*np.cos(2*np.pi*3*t))).astype(np.float32)

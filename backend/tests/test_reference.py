@@ -75,3 +75,18 @@ def test_foreign_book_reference_is_rejected(admin):
         db.get(Page,p['id']).audio_id=second['draft']['pages'][0]['audio_id'];db.commit()
     r=c.post('/api/admin/speech/test',data={'page_id':p['id']},files={'file':('test.wav',wav_bytes())})
     assert r.status_code==422
+
+def test_legacy_round_does_not_silently_change_mode_and_can_restart(admin):
+    app,c=admin;b,v,u=setup_student(app,c);p=v['pages'][0]
+    with app.state.db() as db:
+        db.get(Page,p['id']).audio_id=None;db.commit()
+    old=c.post('/api/sessions',json={'book_id':b['id']}).json()
+    app.state.settings.speech_provider='reference_similarity'
+    r=c.post('/api/evaluations',data={'session_id':old['id'],'page_id':p['id'],'idempotency_key':'legacy'},files={'file':('test.wav',wav_bytes())})
+    assert r.status_code==503
+    new=c.post('/api/sessions',json={'book_id':b['id'],'restart':True}).json()
+    assert new['id']!=old['id'] and new['required_page_ids']==[]
+    assert c.post('/api/sessions/'+new['id']+'/complete').status_code==200
+    # The historical incomplete round and its original requirements stay intact.
+    assert c.get('/api/sessions/'+old['id']).json()['completed_at'] is None
+    assert c.post('/api/sessions/'+old['id']+'/complete').status_code==422

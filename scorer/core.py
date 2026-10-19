@@ -9,7 +9,8 @@ METHOD='wavlm-last-cosine-dtw-path-v1'
 
 def prepare(x):
     x=np.asarray(x,dtype=np.float32)
-    if x.ndim!=1 or not 4800<=len(x)<=960000 or not np.isfinite(x).all():
+    # One second matches the upload API's allowance for browser timer/codec overhead.
+    if x.ndim!=1 or not 4800<=len(x)<=976000 or not np.isfinite(x).all():
         raise ValueError('音频须为 0.3–60 秒的完整录音，请重新录制')
     if np.mean(np.abs(x)>=.995)>.03:
         raise ValueError('音频严重削波，请降低录音音量后重试')
@@ -45,7 +46,7 @@ def _path(cost):
     return acc[n,m]/len(path),path[::-1]
 
 def align(reference,recording):
-    if min(len(reference),len(recording))<1 or max(len(reference),len(recording))>3000:
+    if min(len(reference),len(recording))<1 or max(len(reference),len(recording))>3050:
         raise ValueError('音频长度无法比对')
     if max(len(reference),len(recording))/min(len(reference),len(recording))>4:
         raise ValueError('两段音频时长相差过大，请读完整个片段后重试')

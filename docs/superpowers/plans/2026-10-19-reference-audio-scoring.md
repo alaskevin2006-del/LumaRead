@@ -38,3 +38,9 @@ and report measured blocker, without replacing the approved model.
 - Model weights downloaded and SHA256 verified locally; server source build and model
   upload ongoing. Server HF route timed out, so transfer pinned weights from local.
 - No child recordings available: every similarity result is explicitly experimental.
+
+- Fresh reviewer completed: two P2 findings; both reproduced RED then fixed GREEN.
+  Legacy rounds retain their mode and can explicitly restart without losing history.
+  Browser codec overhead now has a bounded one-second allowance, matching upload validation;
+  full sequence remains unchanged. Probe covers 61 seconds. Full suite: 37 passed, 1 skipped.
+- Review resource note accepted: actual HTTP endpoint memory must be measured, not only the standalone probe.

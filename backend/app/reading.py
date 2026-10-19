@@ -28,16 +28,20 @@ def session_json(db,s,detail=False):
         result['version']=version_json(db,v);result['latest_results']={a.page_id:a.result for a in attempts}
         result['pending_jobs']={a.page_id:a.job_id for a in db.scalars(select(ReadingAttempt).where(ReadingAttempt.session_id==s.id,ReadingAttempt.status.in_(['queued','running'])))}
     return result
-class Start(BaseModel):book_id:str
+class Start(BaseModel):
+    book_id:str
+    restart:bool=False
 class Progress(BaseModel):current_page:int=Field(ge=1,le=100)
 
 @router.post('/sessions')
 def start(data:Start,request:Request,user:Current,db:DB):
     key=user.id+':'+data.book_id
     existing=db.scalar(select(ReadingSession).where(ReadingSession.active_key==key))
-    if existing:return session_json(db,existing,True)
+    if existing and not data.restart:return session_json(db,existing,True)
     b=db.get(Book,data.book_id)
     if not b or b.status!='published':fail(404,'绘本暂不可用')
+    if existing:
+        existing.active_key=None;db.flush()
     mode=request.app.state.settings.speech_provider
     pages=list(db.scalars(select(Page).where(Page.version_id==b.published_version_id,Page.kind=='practice').order_by(Page.position)))
     required=[p.id for p in pages if reference_snapshot(db,p,False)] if mode==MODE else None
@@ -87,7 +91,8 @@ async def evaluate(request:Request,user:Current,db:DB,file:UploadFile=File(),ses
     if s.completed_at:fail(409,'本轮已完成，请开始新一轮阅读')
     if not p or p.version_id!=s.version_id or p.kind!='practice':fail(422,'此页面不可跟读')
     settings=request.app.state.settings
-    provider=s.scoring_mode or settings.speech_provider
+    # Migrated/previously unconfigured rounds retain the legacy text contract.
+    provider=s.scoring_mode or (settings.speech_provider if settings.speech_provider in ['azure','remote'] else 'disabled')
     if provider not in ['azure','remote',MODE] or settings.speech_provider=='disabled':fail(503,'比对服务暂不可用，请稍后再试')
     if provider==MODE and s.required_page_ids is not None and p.id not in s.required_page_ids:fail(422,'本页仅供阅读，不需要跟读')
     reference=reference_snapshot(db,p) if provider==MODE else None
