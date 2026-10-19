@@ -6,3 +6,5 @@
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
 .modal-wide{width:min(960px,96vw);max-width:960px}.modal-wide td input{min-width:90px}.modal-wide td select{min-width:140px}.page-placeholder{min-height:60px;display:grid;place-items:center;color:#83917b;background:#f2f5ed;border-radius:6px}.editor-form>.row{margin-bottom:16px}.editor-form fieldset>.button{margin-top:10px}
+
+.similarity-result{min-width:0}.similarity-result .row{flex-wrap:wrap}.similarity-result .score small{display:block;white-space:normal}.similarity-result .button{max-width:100%;white-space:normal}

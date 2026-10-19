@@ -34,3 +34,23 @@ test('legacy reader can explicitly restart with reference comparison',async({pag
  await expect(page.getByRole('button',{name:'开始跟读'})).toHaveCount(0);
  await expect(page.getByText('本页仅阅读',{exact:true})).toBeVisible();
 });
+
+test('administrator comparison playback controls stay inside the result card',async({page})=>{
+ await page.route('**/api/auth/me',r=>r.fulfill({json:{id:'admin',name:'管理员',role:'admin',must_change_password:false}}));
+ const version={id:'v',title:'Layout test',number:1,published:false,pages:[{id:'p',position:1,kind:'practice',text:'Read this.',audio_id:'ref',audio_start_ms:0,audio_end_ms:2000}]};
+ const book={id:'layout-test',status:'draft',draft:version,published:null};
+ await page.route('**/api/admin/books',r=>r.fulfill({json:[book]}));await page.route('**/api/admin/books/layout-test',r=>r.fulfill({json:book}));
+ await page.route('**/api/admin/versions/v/assets',r=>r.fulfill({json:[]}));
+ await page.route('**/api/speech/status',r=>r.fulfill({json:{configured:true,provider:'reference_similarity'}}));
+ await page.route('**/api/admin/speech/test',r=>r.fulfill({json:{id:'layout-job'}}));
+ await page.route('**/api/jobs/layout-job',r=>r.fulfill({json:{id:'layout-job',status:'succeeded',result:{mode:'reference_similarity',overall_score:100,words:[],experimental:true,segments:[{reference_start:0,reference_end:2,recording_start:0,recording_end:2,similarity:100}]}}}));
+ await page.goto('/#/admin/book/layout-test');await page.getByRole('button',{name:'试读评分',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'本页试读评分 · 可选'});
+ await dialog.locator('input[type=file]').setInputFiles({name:'layout-fixture.wav',mimeType:'audio/wav',buffer:Buffer.from('ui-only')});
+ await dialog.getByRole('button',{name:'运行评分',exact:true}).click();
+ const button=dialog.getByRole('button',{name:'听我的对应录音'});await expect(button).toBeVisible();
+ for(const width of [1440,390]){
+  await page.setViewportSize({width,height:1000});
+  await expect.poll(()=>button.evaluate(el=>el.getBoundingClientRect().right<=el.parentElement!.parentElement!.getBoundingClientRect().right)).toBeTruthy();
+ }
+});
