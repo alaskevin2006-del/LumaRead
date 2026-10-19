@@ -21,3 +21,13 @@ Final review: four Important findings confirmed and fixed: streaming WebM durati
 Final: reviewer minor upload-job visibility was regraded Important because navigation could strand the user in an incorrect recording state; job responses now refresh session state independent of visible page. Reviewer minor unbounded login-key memory was regraded Important for a public service; expiry and a 4096-key limit added and verified RED→GREEN. No reviewer minors remain deferred.
 
 Deployment build: first attempt hit existing root-owned Docker builder metadata; use sudo only for LumaRead Compose rather than altering Docker ownership. Debian HTTP downloads stalled; Dockerfile now supports an HTTPS mirror and bounded transport retries. Current server build uses Tencent's Debian mirror only within the LumaRead build. Existing application containers were not restarted.
+
+Deployment verified 2026-10-19: PostgreSQL suite 19 passed, including real row-lock concurrency. Production migrations, private-media volume permissions, administrator login, Secure/HttpOnly cookies, public HTTPS and Chromium UI all pass. Browser exposes secure context and microphone API. Public URL https://124.221.230.69:8443/.
+
+User clarified existing Tencent CLI authorization. Located existing OAuth profile without printing secret values, identified the exact server IP in Shanghai, and added only TCP 8443 via versioned CreateFirewallRules. All 8 prior rules preserved. No cloud credential copied to app/server configuration. Previous cloud-port blocker is resolved.
+
+Existing Yixue/AUGENBLICK container IDs unchanged across LumaRead deployment; both endpoints return HTTP 200. LumaRead uses roughly 257 MiB resident memory at idle. Existing yixue-ip-renew.timer was verified read-only; LumaRead's own certificate copy timer active. Backup at /opt/lumaread/backups/20261019T074007Z; restored into new lumaread_restore_test, verified administrator row, removed only that test database.
+
+Ruling: initial public database intentionally contains only the administrator; institution materials and child test samples have not been provided. The existing illustrative dog image is decoration, not a fake published course. The full-feature acceptance remains open specifically for real speech evaluation and child samples; formal completion/check-in is intentionally not bypassed.
+
+No deferred reviewer minors. Delivery and operational evidence recorded in docs/验收记录.md; admin credential delivered only in ignored .local/LumaRead-管理员登录.txt.

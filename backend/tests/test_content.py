@@ -81,3 +81,30 @@ def test_failed_pdf_cannot_be_retried_after_publication(admin):
     assert c.post(f'/api/admin/versions/{vid}/publish').status_code==200
     assert c.post(f'/api/jobs/{jid}/retry').status_code==409
     assert c.get('/api/jobs/'+jid).json()['status']=='failed'
+
+def test_pdf_retry_waits_for_publication_lock_on_postgres(admin):
+    import pytest,threading
+    from concurrent.futures import ThreadPoolExecutor
+    from app.content import get_draft
+    from app.models import Job
+    app,c=admin
+    if app.state.engine.dialect.name!='postgresql':pytest.skip('Requires real PostgreSQL row locks')
+    b=ready_book(app,c);vid=b['draft']['id']
+    with app.state.db() as db:
+        j=Job(user_id=db.query(Job).first().user_id,kind='pdf',status='failed',payload={'version_id':vid,'asset_id':'unused'})
+        db.add(j);db.commit();jid=j.id
+    locked=threading.Event();release=threading.Event()
+    def publishing():
+        with app.state.db() as db:
+            v=get_draft(db,vid);locked.set()
+            if not release.wait(5):raise TimeoutError('Test publisher did not release')
+            v.published=True;db.commit()
+    with ThreadPoolExecutor(2) as pool:
+        publisher=pool.submit(publishing);assert locked.wait(3)
+        retry=pool.submit(lambda:c.post('/api/jobs/'+jid+'/retry'))
+        try:
+            # A retry must wait until publication commits, then reject the locked version.
+            from concurrent.futures import TimeoutError as FutureTimeout
+            with pytest.raises(FutureTimeout):retry.result(timeout=.2)
+        finally:release.set()
+        publisher.result(timeout=5);assert retry.result(timeout=5).status_code==409

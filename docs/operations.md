@@ -51,3 +51,9 @@ docker compose up -d api worker cleanup web gateway
 - 各服务设置内存/CPU 上限，避免抢占共用机器。当前 4 GB 服务器不加载大语音模型。
 - 录音文件每天清理超过 30 天的数据，评分摘要继续留在阅读记录。备份中的录音需要单独按机构保留政策清理。
 - 正式开放前，在管理员“评分测试”里用真实儿童样例检验：正确读、漏词、读错、静音、噪音、重复词、断网重试。没有真实评分服务时不能验收“评分与完成打卡”。
+
+## PostgreSQL 回归测试
+
+`sh deploy/verify-postgres.sh` 会创建专用的 `lumaread_test` 数据库，运行测试后删除它；若该库已存在则拒绝操作。不会清空生产数据库。测试容器临时安装 pytest，可通过 `LUMA_TEST_PIP_INDEX` 指定可信的软件镜像。当前部署已验证 19 项通过，包括并发发布/重试互斥。
+
+当前腾讯云防火墙已使用既有 CLI OAuth 授权添加 TCP 8443。调用采用 [CreateFirewallRules](https://cloud.tencent.com/document/api/1207/48254) 的增量添加与版本校验，未替换整个规则集合。临时云凭据未写入应用配置。
