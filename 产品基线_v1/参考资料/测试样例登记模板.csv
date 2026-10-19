@@ -1,0 +1,2 @@
+sample_id,age_band,book_id,page_number,reference_text,audio_path,device_browser,environment,human_overall,wrong_token_indexes,uncertain_token_indexes,notes
+EXAMPLE_ONLY,7-9,book_demo,4,The little dog runs across the grass. It sees a bright red ball.,audio/example.wav,待填写,安静,待复核,,,此行为格式示例请替换非真实样例
