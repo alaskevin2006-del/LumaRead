@@ -147,7 +147,7 @@ async def import_pdf(version_id:str,request:Request,admin:Admin,db:DB,file:Uploa
     a=await save_upload(file,'pdf',admin.id,version_id,request.app.state.settings,db)
     j=Job(user_id=admin.id,kind='pdf',payload={'version_id':version_id,'asset_id':a.id});db.add(j);db.commit();return {'id':j.id,'status':j.status}
 
-def publish_issues(db,v):
+def publish_issues(db,v,mode=None):
     issues=[];pages=list(db.scalars(select(Page).where(Page.version_id==v.id).order_by(Page.position)))
     if not v.title.strip():issues.append('请填写书名')
     if not v.cover_id and not any(p.image_id for p in pages):issues.append('请设置封面或上传页面图片')
@@ -156,19 +156,21 @@ def publish_issues(db,v):
         prefix=f'第 {p.position} 页：'
         if not (p.image_id or p.text.strip() or p.audio_id):issues.append(prefix+'页面为空，请添加图片、文字或音频')
         if p.kind=='practice':
-            if not p.text.strip():issues.append(prefix+'缺少标准英文')
+            if mode!='reference_similarity' and not p.text.strip():issues.append(prefix+'缺少标准英文')
         if p.audio_id:
             a=db.get(MediaAsset,p.audio_id)
             if not a or not p.audio_end_ms or not 0<=p.audio_start_ms<p.audio_end_ms<=a.duration_ms:issues.append(prefix+'音频区间无效')
     return issues
 @router.get('/admin/versions/{version_id}/check')
-def check(version_id:str,admin:Admin,db:DB):
+def check(version_id:str,request:Request,admin:Admin,db:DB):
     v=db.get(BookVersion,version_id)
     if not v:fail(404,'版本不存在')
-    return {'issues':publish_issues(db,v)}
+    from .reference import reference_snapshot
+    warnings=[f'第 {p.position} 页仅供阅读：尚未设置 0.3–60 秒的标准音频区间' for p in db.scalars(select(Page).where(Page.version_id==v.id,Page.kind=='practice').order_by(Page.position)) if not reference_snapshot(db,p,False)]
+    return {'issues':publish_issues(db,v,request.app.state.settings.speech_provider),'warnings':warnings}
 @router.post('/admin/versions/{version_id}/publish')
-def publish(version_id:str,admin:Admin,db:DB):
-    v=get_draft(db,version_id);busy(db,version_id);issues=publish_issues(db,v)
+def publish(version_id:str,request:Request,admin:Admin,db:DB):
+    v=get_draft(db,version_id);busy(db,version_id);issues=publish_issues(db,v,request.app.state.settings.speech_provider)
     if issues:raise __import__('fastapi').HTTPException(422,{'message':'发布检查未通过','issues':issues})
     if not v.cover_id:v.cover_id=db.scalar(select(Page.image_id).where(Page.version_id==v.id,Page.image_id.is_not(None)).order_by(Page.position))
     v.published=True;b=db.get(Book,v.book_id);b.published_version_id=v.id;b.status='published';db.commit();return book_json(db,b,True)

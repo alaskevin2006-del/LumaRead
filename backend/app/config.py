@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     public_origin:str='https://124.221.230.69:8443'
     speech_provider:str='disabled'
     speech_url:str='http://evaluator:8000'
+    reference_url:str='http://scorer:8000'
     azure_key:str=''
     azure_region:str=''
     green_threshold:int=80

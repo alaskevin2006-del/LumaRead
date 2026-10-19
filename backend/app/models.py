@@ -90,6 +90,8 @@ class ReadingSession(Base):
     user_id:Mapped[str]=mapped_column(ForeignKey('users.id'),index=True)
     book_id:Mapped[str]=mapped_column(ForeignKey('books.id'))
     version_id:Mapped[str]=mapped_column(ForeignKey('book_versions.id'))
+    scoring_mode:Mapped[str|None]=mapped_column(String(32),nullable=True)
+    required_page_ids:Mapped[list|None]=mapped_column(JSON,nullable=True)
     current_page:Mapped[int]=mapped_column(Integer,default=1)
     active_key:Mapped[str|None]=mapped_column(String(80),unique=True,nullable=True)
     created_at:Mapped[datetime]=mapped_column(DateTime,default=now)

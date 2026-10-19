@@ -8,6 +8,7 @@ from .auth import DB,Current,Admin,fail
 from .models import Book,BookVersion,Page,ReadingSession,ReadingAttempt,Checkin,Job,now
 from .content import version_json,get_draft,busy
 from .media import save_upload
+from .reference import MODE,reference_snapshot
 
 router=APIRouter(prefix='/api')
 def local_date(dt=None):return (dt or now()).replace(tzinfo=timezone.utc).astimezone(ZoneInfo('Asia/Shanghai')).date()
@@ -21,6 +22,8 @@ def session_json(db,s,detail=False):
     result={'id':s.id,'book_id':s.book_id,'version_id':s.version_id,'current_page':s.current_page,'completed_at':s.completed_at,'created_at':s.created_at,'completed_pages':list(dict.fromkeys(a.page_id for a in attempts))}
     v=db.get(BookVersion,s.version_id)
     result.update(title=v.title,level=v.level,cover_id=v.cover_id,page_count=db.scalar(select(func.count()).select_from(Page).where(Page.version_id==v.id,Page.kind=='practice')))
+    result.update(scoring_mode=s.scoring_mode,required_page_ids=s.required_page_ids)
+    if s.required_page_ids is not None:result['page_count']=len(s.required_page_ids)
     if detail:
         result['version']=version_json(db,v);result['latest_results']={a.page_id:a.result for a in attempts}
         result['pending_jobs']={a.page_id:a.job_id for a in db.scalars(select(ReadingAttempt).where(ReadingAttempt.session_id==s.id,ReadingAttempt.status.in_(['queued','running'])))}
@@ -29,13 +32,16 @@ class Start(BaseModel):book_id:str
 class Progress(BaseModel):current_page:int=Field(ge=1,le=100)
 
 @router.post('/sessions')
-def start(data:Start,user:Current,db:DB):
+def start(data:Start,request:Request,user:Current,db:DB):
     key=user.id+':'+data.book_id
     existing=db.scalar(select(ReadingSession).where(ReadingSession.active_key==key))
     if existing:return session_json(db,existing,True)
     b=db.get(Book,data.book_id)
     if not b or b.status!='published':fail(404,'绘本暂不可用')
-    s=ReadingSession(user_id=user.id,book_id=b.id,version_id=b.published_version_id,active_key=key);db.add(s)
+    mode=request.app.state.settings.speech_provider
+    pages=list(db.scalars(select(Page).where(Page.version_id==b.published_version_id,Page.kind=='practice').order_by(Page.position)))
+    required=[p.id for p in pages if reference_snapshot(db,p,False)] if mode==MODE else None
+    s=ReadingSession(user_id=user.id,book_id=b.id,version_id=b.published_version_id,active_key=key,scoring_mode=mode if mode!='disabled' else None,required_page_ids=required);db.add(s)
     try:db.commit()
     except IntegrityError:db.rollback();s=db.scalar(select(ReadingSession).where(ReadingSession.active_key==key))
     return session_json(db,s,True)
@@ -52,7 +58,7 @@ def complete(session_id:str,user:Current,db:DB):
     if s.completed_at:return session_json(db,s)
     pages=list(db.scalars(select(Page).where(Page.version_id==s.version_id,Page.kind=='practice').order_by(Page.position)))
     done=set(db.scalars(select(ReadingAttempt.page_id).where(ReadingAttempt.session_id==s.id,ReadingAttempt.status=='succeeded')))
-    missing=[p.position for p in pages if p.id not in done]
+    missing=[p.position for p in pages if p.id not in done and (s.required_page_ids is None or p.id in s.required_page_ids)]
     if missing:raise HTTPException(422,{'message':'请补齐未练习的页面','missing_pages':missing})
     s.completed_at=now();s.active_key=None;day=local_date(s.completed_at)
     insert=__import__('sqlalchemy.dialects.sqlite' if db.bind.dialect.name=='sqlite' else 'sqlalchemy.dialects.postgresql',fromlist=['insert']).insert
@@ -70,7 +76,7 @@ def stats(user:Current,db:DB):
 @router.get('/speech/status')
 def speech_status(request:Request,user:Current):
     s=request.app.state.settings
-    return {'provider':s.speech_provider,'configured':s.speech_provider=='remote' or (s.speech_provider=='azure' and bool(s.azure_key and s.azure_region)),'message':'评分服务尚未配置，当前可以听读；配置完成后可跟读评分。' if s.speech_provider=='disabled' else '评分供练习参考'}
+    return {'provider':s.speech_provider,'configured':s.speech_provider in ['remote',MODE] or (s.speech_provider=='azure' and bool(s.azure_key and s.azure_region)),'message':'评分服务尚未配置，当前可以听读；配置完成后可跟读评分。' if s.speech_provider=='disabled' else '评分供练习参考'}
 @router.post('/evaluations',status_code=202)
 async def evaluate(request:Request,user:Current,db:DB,file:UploadFile=File(),session_id:str=Form(),page_id:str=Form(),idempotency_key:str=Form(max_length=80)):
     previous=db.scalar(select(ReadingAttempt).where(ReadingAttempt.user_id==user.id,ReadingAttempt.idempotency_key==idempotency_key))
@@ -81,11 +87,14 @@ async def evaluate(request:Request,user:Current,db:DB,file:UploadFile=File(),ses
     if s.completed_at:fail(409,'本轮已完成，请开始新一轮阅读')
     if not p or p.version_id!=s.version_id or p.kind!='practice':fail(422,'此页面不可跟读')
     settings=request.app.state.settings
-    if settings.speech_provider not in ['azure','remote']:fail(503,'真实评分服务尚未配置；不会使用模拟成绩')
+    provider=s.scoring_mode or settings.speech_provider
+    if provider not in ['azure','remote',MODE] or settings.speech_provider=='disabled':fail(503,'比对服务暂不可用，请稍后再试')
+    if provider==MODE and s.required_page_ids is not None and p.id not in s.required_page_ids:fail(422,'本页仅供阅读，不需要跟读')
+    reference=reference_snapshot(db,p) if provider==MODE else None
     pending=db.scalar(select(func.count()).select_from(Job).where(Job.user_id==user.id,Job.kind=='evaluation',Job.status.in_(['queued','running'])))
     if pending>=3:fail(429,'还有录音正在处理，请稍后再试')
     a=await save_upload(file,'recording',user.id,None,settings,db)
-    j=Job(user_id=user.id,kind='evaluation',payload={'asset_id':a.id,'page_id':p.id,'reference_text':p.text,'version_id':p.version_id});db.add(j);db.flush()
+    j=Job(user_id=user.id,kind='evaluation',payload={'asset_id':a.id,'page_id':p.id,'reference_text':p.text,'version_id':p.version_id,'provider':provider,'reference':reference});db.add(j);db.flush()
     attempt=ReadingAttempt(user_id=user.id,session_id=s.id,page_id=p.id,media_id=a.id,job_id=j.id,idempotency_key=idempotency_key);db.add(attempt)
     try:db.commit()
     except IntegrityError:
@@ -108,7 +117,17 @@ def retry(job_id:str,user:Current,db:DB):
     for a in db.scalars(select(ReadingAttempt).where(ReadingAttempt.job_id==j.id)):a.status='queued'
     db.commit();return {'id':j.id,'status':j.status}
 @router.post('/admin/speech/test',status_code=202)
-async def speech_test(request:Request,admin:Admin,db:DB,file:UploadFile=File(),reference_text:str=Form(min_length=1,max_length=3000)):
-    if request.app.state.settings.speech_provider not in ['azure','remote']:fail(503,'请先配置真实评分服务')
+async def speech_test(request:Request,admin:Admin,db:DB,file:UploadFile=File(),reference_text:str=Form(default='',max_length=3000),page_id:str=Form(default='')):
+    provider=request.app.state.settings.speech_provider
+    if provider not in ['azure','remote',MODE]:fail(503,'比对服务尚未启用')
+    reference=None
+    if provider==MODE:
+        p=db.get(Page,page_id)
+        if not p:fail(404,'页面不存在')
+        reference=reference_snapshot(db,p)
+        reference_text=p.text
+    elif not reference_text.strip():fail(422,'请填写参考文字')
+    pending=db.scalar(select(func.count()).select_from(Job).where(Job.user_id==admin.id,Job.kind=='evaluation',Job.status.in_(['queued','running'])))
+    if pending>=3:fail(429,'还有录音正在处理，请稍后再试')
     a=await save_upload(file,'recording',admin.id,None,request.app.state.settings,db)
-    j=Job(user_id=admin.id,kind='evaluation',payload={'asset_id':a.id,'reference_text':reference_text,'test':True});db.add(j);db.commit();return {'id':j.id}
+    j=Job(user_id=admin.id,kind='evaluation',payload={'asset_id':a.id,'reference_text':reference_text,'test':True,'provider':provider,'reference':reference,'page_id':page_id});db.add(j);db.commit();return {'id':j.id}

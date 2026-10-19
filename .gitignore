@@ -21,3 +21,5 @@ coverage/
 backups/
 certs/
 deploy/certificate-source.env
+
+models/
