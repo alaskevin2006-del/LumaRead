@@ -19,3 +19,18 @@ test('reference results show aligned audio segments and no invented word assessm
  await expect(page.getByText('本页仅阅读',{exact:true})).toBeVisible();
  await expect(page.getByRole('button',{name:'开始跟读'})).toHaveCount(0);
 });
+
+test('legacy reader can explicitly restart with reference comparison',async({page})=>{
+ await page.route('**/api/books',r=>r.fulfill({json:[]}));
+ await page.route('**/api/auth/me',r=>r.fulfill({json:{id:'test',name:'测试',role:'student',must_change_password:false}}));
+ await page.route('**/api/me/history',r=>r.fulfill({json:[]}));await page.route('**/api/me/stats',r=>r.fulfill({json:{checkins:[]}}));
+ await page.route('**/api/speech/status',r=>r.fulfill({json:{configured:true,provider:'reference_similarity'}}));
+ const data={book_id:'book',current_page:1,completed_pages:[],pending_jobs:{},latest_results:{},version:{title:'Legacy round',pages:[{id:'p',position:1,kind:'practice',text:'Read',audio_id:null}]}};
+ await page.route('**/api/sessions/old',r=>r.fulfill({json:{...data,id:'old',scoring_mode:null,required_page_ids:null}}));
+ await page.route('**/api/sessions/new',r=>r.fulfill({json:{...data,id:'new',scoring_mode:'reference_similarity',required_page_ids:[]}}));
+ await page.route('**/api/sessions',r=>{expect(r.request().postDataJSON()).toEqual({book_id:'book',restart:true});return r.fulfill({json:{id:'new'}});});
+ await page.goto('/#/read/old');await page.getByRole('button',{name:'使用原音比对新开一轮'}).click();
+ await expect(page).toHaveURL(/#\/read\/new$/);
+ await expect(page.getByRole('button',{name:'开始跟读'})).toHaveCount(0);
+ await expect(page.getByText('本页仅阅读',{exact:true})).toBeVisible();
+});
